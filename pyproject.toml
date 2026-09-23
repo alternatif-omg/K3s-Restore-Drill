@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "k3s-restore-drill"
+version = "0.1.0"
+description = "Verify K3s embedded-etcd snapshots on a disposable VM."
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+
+[project.scripts]
+k3s-restore-drill = "k3s_restore_drill.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

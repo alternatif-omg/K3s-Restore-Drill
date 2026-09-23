@@ -1,0 +1,21 @@
+{
+  "api_ready": true,
+  "duration_seconds": 83.427,
+  "error": null,
+  "error_code": null,
+  "hint": null,
+  "k3s_version": "k3s version vX.Y.Z+k3s1",
+  "marker_found": true,
+  "snapshot_size_bytes": 1048576,
+  "stage": "complete",
+  "stages": {
+    "check_api": "PASS",
+    "check_marker": "PASS",
+    "preflight": "READY_TO_TRY",
+    "prepare": "PASS",
+    "restore": "PASS",
+    "start": "STARTED"
+  },
+  "started_at": "2026-09-23T00:00:00Z",
+  "status": "PASS"
+}
