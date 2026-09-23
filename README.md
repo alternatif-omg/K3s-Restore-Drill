@@ -35,14 +35,68 @@ A PASS is recorded with the K3s version, snapshot size, duration, and completed 
 ## Recovery-drill flow
 
 ```mermaid
-flowchart LR
-    S["Training K3s source host"] -->|"snapshot + original server token"| W["Secure local transfer"]
-    W --> T["Disposable restore target"]
-    T --> P["inspect: preflight"]
-    P --> R["verify: cluster-reset"]
-    R --> A["Start recovered K3s"]
-    A --> C["Check API + marker ConfigMap"]
-    C --> O["Sanitized PASS / FAIL report"]
+flowchart TB
+    subgraph Source["Source: training K3s host"]
+        direction TB
+        S1["Create non-secret marker ConfigMap"]
+        S2["Create embedded-etcd snapshot"]
+        S3["Copy original server token"]
+        S1 --> S2
+        S1 --> S3
+    end
+
+    subgraph Transfer["Controlled transfer"]
+        direction TB
+        X1["Copy snapshot + token through a secure channel"]
+        X2["Never publish inputs or place them in Git"]
+        X1 --> X2
+    end
+
+    subgraph Target["Target: disposable restore VM"]
+        direction TB
+        T1["Clean Linux target<br/>K3s services inactive and disabled"]
+        T2{"inspect"}
+        T3["Create private work directory<br/>and private data-dir token"]
+        T4["K3s cluster-reset<br/>from local snapshot"]
+        T5{"Restore completed?"}
+        T6["Start recovered K3s server"]
+        T7{"Kubernetes API ready?"}
+        T8{"Pre-snapshot marker found?"}
+        T9["PASS report<br/>API + recovered state verified"]
+        F1["FAIL report<br/>stage, hint, sanitized error"]
+        C1["Stop test process<br/>remove private run directory"]
+
+        T1 --> T2
+        T2 -- "BLOCKED / UNKNOWN" --> F1
+        T2 -- "READY_TO_TRY" --> T3
+        T3 --> T4 --> T5
+        T5 -- "no" --> F1
+        T5 -- "yes" --> T6 --> T7
+        T7 -- "no" --> F1
+        T7 -- "yes" --> T8
+        T8 -- "no" --> F1
+        T8 -- "yes" --> T9
+        T9 --> C1
+        F1 --> C1
+    end
+
+    S2 --> X1
+    S3 --> X1
+    X2 --> T1
+
+    classDef source fill:#e8f3ff,stroke:#2574a9,color:#123;
+    classDef transfer fill:#fff4d6,stroke:#b7791f,color:#432;
+    classDef action fill:#eef7ec,stroke:#43834a,color:#132;
+    classDef decision fill:#f3ecff,stroke:#7754a8,color:#231;
+    classDef pass fill:#d9f7df,stroke:#27834a,color:#132;
+    classDef fail fill:#ffe1e1,stroke:#b53b3b,color:#412;
+
+    class S1,S2,S3 source;
+    class X1,X2 transfer;
+    class T1,T3,T4,T6,C1 action;
+    class T2,T5,T7,T8 decision;
+    class T9 pass;
+    class F1 fail;
 ```
 
 `neb` and `ben` in a lab are examples only. The source and target must be different Linux environments; never run the reset on the source cluster.
