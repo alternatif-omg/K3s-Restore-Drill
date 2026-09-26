@@ -26,11 +26,12 @@ This project turns the tested manual sequence into a repeatable drill with prefl
 
 For the supported environment, `PASS` means:
 
-1. K3s restored the supplied embedded-etcd snapshot on the disposable target.
+1. K3s restored a supplied single-server or three-server-HA embedded-etcd snapshot on the disposable target.
 2. The restored K3s API became ready.
-3. The target could read a ConfigMap marker created **before** the snapshot.
+3. The target read a ConfigMap marker created **before** the snapshot.
+4. A temporary verification pod mounted the restored local-path PVC and matched its recorded SHA-256 checksum.
 
-A PASS is recorded with the K3s version, snapshot size, duration, and completed stages. It proves recovery for that snapshot-token pair on that tested target environment. It does **not** prove application, PVC, image, networking, external database, or production-cluster recovery.
+The report records topology, K3s version, snapshot size, duration, and completed stages. A local-path PVC is separate host-disk data, so its archive is required in addition to the etcd snapshot and token.
 
 ## Recovery-drill flow
 
@@ -38,16 +39,16 @@ A PASS is recorded with the K3s version, snapshot size, duration, and completed 
 flowchart TB
     subgraph Source["Source: training K3s host"]
         direction TB
-        S1["Create non-secret marker ConfigMap"]
-        S2["Create embedded-etcd snapshot"]
-        S3["Copy original server token"]
+        S1["Create non-secret marker and PVC payload"]
+        S2["Create embedded-etcd snapshot and PVC archive"]
+        S3["Copy original server token and checksum manifest"]
         S1 --> S2
         S1 --> S3
     end
 
     subgraph Transfer["Controlled transfer"]
         direction TB
-        X1["Copy snapshot + token through a secure channel"]
+        X1["Copy snapshot, token, PVC archive, and manifest through a secure channel"]
         X2["Never publish inputs or place them in Git"]
         X1 --> X2
     end
@@ -61,8 +62,8 @@ flowchart TB
         T5{"Restore completed?"}
         T6["Start recovered K3s server"]
         T7{"Kubernetes API ready?"}
-        T8{"Pre-snapshot marker found?"}
-        T9["PASS report<br/>API + recovered state verified"]
+        T8{"Marker and PVC checksum match?"}
+        T9["PASS report<br/>API, marker, and PVC verified"]
         F1["FAIL report<br/>stage, hint, sanitized error"]
         C1["Stop test process<br/>remove private run directory"]
 
@@ -103,28 +104,25 @@ flowchart TB
 
 ## What `verify` does
 
-1. **Preflight** — validates Linux, readable and nonempty inputs, POSIX token permissions, available disk, K3s version, a dedicated work directory, and the absence of active or enabled `k3s`/`k3s-agent` services and default K3s state.
-2. **Prepare** — creates a unique `0700` work directory, copies snapshot and token with restricted permissions, and keeps secret values out of command output and reports.
-3. **Restore** — invokes `k3s server --cluster-reset` without shell interpolation, with a private data directory, `--token-file`, `--etcd-s3=false`, and the private data-directory token K3s requires during reset.
-4. **Start** — starts a normal K3s server from the recovered data directory.
-5. **Verify** — waits for `/readyz`, then reads the expected marker ConfigMap by namespace and name.
-6. **Report and cleanup** — emits a sanitized JSON report, terminates the test K3s process, and removes the unique run directory unless `--keep-artifacts` was requested.
+1. **Preflight** — validates Linux, readable and nonempty inputs, POSIX token permissions, available disk, a dedicated work directory, and the absence of active or enabled `k3s`/`k3s-agent` services and default K3s state.
+2. **Prepare** — validates the PVC manifest, safely extracts the local-path archive only beneath `/var/lib/rancher/k3s/storage`, and creates private snapshot/token copies.
+3. **Restore and start** — invokes K3s only through argv lists, restores with `--cluster-reset`, then starts a normal recovered server.
+4. **Verify** — waits for `/readyz` and for the recovered node to become Ready, reads the marker, then hashes the restored local-path payload without requiring an image pull. For HA, it preserves the PV's immutable source-node affinity and rebinds that recovered node's status to the disposable target IP.
+5. **Report and cleanup** — emits a sanitized JSON report, terminates test K3s, deletes the restored local-path directory, and removes the unique run directory unless `--keep-artifacts` was requested.
 
 ## Supported scope
 
 - Linux x86_64, root-operated, disposable and network-isolated target VM.
-- K3s **single-server embedded etcd** snapshots and the original server token.
-- Local snapshot files only.
-- A K3s binary compatible with the source snapshot.
-- A non-secret ConfigMap marker created before the snapshot.
-- A target where neither `k3s` nor `k3s-agent` is active or enabled. An enabled service could create default K3s state on reboot.
+- K3s single-server and three-server HA embedded-etcd snapshots, restored to one target member.
+- Local snapshot, original server token, local-path volume archive, and checksum manifest.
+- A K3s binary compatible with the source snapshot and a non-secret pre-snapshot ConfigMap marker.
 
 ## Explicit non-goals
 
 - Production restore.
-- SQLite, external datastore, S3, or HA/multi-server recovery.
+- SQLite, external datastore, S3, or non-local-path storage recovery.
 - Automatic VM provisioning, scheduling, dashboards, or SaaS.
-- PVC, workload, image, network, database, or application-health recovery.
+- Application-health, image-registry, network, and database recovery.
 - Replacing the official K3s restore implementation.
 
 K3s performs the actual etcd restore and checksum work. This project orchestrates a guarded drill around it.
@@ -169,7 +167,8 @@ sudo env "PYTHONPATH=$PWD/src" \
   python3 -m k3s_restore_drill.cli inspect \
   --snapshot=/secure-backups/etcd-snapshot \
   --token-file=/secure-backups/server-token \
-  --work-dir=/var/lib/k3s-restore-drill
+  --work-dir=/var/lib/k3s-restore-drill \
+  --topology=ha
 ```
 
 `READY_TO_TRY` means the local target prerequisites passed. It does **not** mean the token is correct or the snapshot is restorable.
@@ -186,6 +185,9 @@ sudo env "PYTHONPATH=$PWD/src" \
   --work-dir=/var/lib/k3s-restore-drill \
   --expected-marker=k3s-drill-marker \
   --marker-namespace=drill \
+  --topology=ha \
+  --expected-pvc-checksum-file=/secure-backups/pvc-checksums.json \
+  --pvc-volume-archive=/secure-backups/pvc-volume.tar.gz \
   --report=/home/operator/restore-report.json \
   --disposable-vm
 ```
@@ -203,9 +205,11 @@ The report does not include a token or Kubernetes resource contents. Its stable 
   "started_at": "2026-09-23T00:00:00Z",
   "duration_seconds": 29.3,
   "k3s_version": "k3s version vX.Y.Z+k3s1",
+  "topology": "ha",
   "snapshot_size_bytes": 1048576,
   "api_ready": true,
   "marker_found": true,
+  "pvc_checksum_match": true,
   "error_code": null,
   "hint": null
 }
@@ -221,13 +225,14 @@ Exit codes:
 
 ## Lab evidence
 
-The MVP was exercised end-to-end on separate Ubuntu 24.04 source and target VMs:
+The CLI was exercised end-to-end on separate Ubuntu 24.04 source and target VMs:
 
+- source: three-server HA embedded-etcd; target: one disposable restore VM;
 - source and target K3s: `v1.36.4+k3s1`;
-- embedded-etcd snapshot: 7,184,416 bytes;
+- embedded-etcd snapshot: 5,271,584 bytes;
 - marker: `drill/k3s-drill-marker`;
-- result: `PASS`, API ready and marker found;
-- measured drill duration: 29.3 seconds.
+- result: `PASS`, API and recovered node ready, marker found, and local-path PVC SHA-256 matched;
+- measured CLI drill duration: 52.926 seconds.
 
 This is one lab result, not a compatibility promise for every K3s configuration.
 

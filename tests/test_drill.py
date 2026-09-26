@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 
@@ -55,6 +58,14 @@ class DrillTests(unittest.TestCase):
         self.binary.write_text("binary", encoding="utf-8")
         self.preflight = PreflightResult((), self.binary, "k3s version v1", self.snapshot.stat().st_size)
         self.work = root / "work"
+        self.pvc_archive = root / "pvc.tar"
+        self.expected_digest = hashlib.sha256(b"payload").hexdigest()
+        with tarfile.open(self.pvc_archive, "w") as archive:
+            payload = root / "payload.txt"
+            payload.write_bytes(b"payload")
+            archive.add(payload, arcname="payload.txt")
+        self.pvc_manifest = root / "pvc.json"
+        self.pvc_manifest.write_text(json.dumps({"local_path": f"/var/lib/rancher/k3s/storage/test-pvc-{id(self):x}", "relative_path": "payload.txt", "sha256": self.expected_digest, "namespace": "drill", "claim": "data", "pv": "test-pv"}), encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -65,12 +76,15 @@ class DrillTests(unittest.TestCase):
             "startup_timeout": 1,
             "runner": runner,
             "sleep": lambda _: None,
+            "topology": "single",
+            "pvc_checksum_file": self.pvc_manifest,
+            "pvc_volume_archive": self.pvc_archive,
         }
         options.update(kwargs)
         return verify(preflight=self.preflight, snapshot=self.snapshot, token_file=self.token, work_dir=self.work, marker_name="marker", marker_namespace="default", **options)
 
     def test_pass_requires_restore_api_and_marker(self) -> None:
-        report = self.run_verify(FakeRunner([CommandResult(0, ""), CommandResult(0, "ok"), CommandResult(0, "configmap/marker")]), keep_artifacts=False)
+        report = self.run_verify(FakeRunner([CommandResult(0, ""), CommandResult(0, "ok"), CommandResult(0, "node/test"), CommandResult(0, "configmap/marker")]), keep_artifacts=False)
         self.assertEqual(report.status, "PASS")
         self.assertTrue(report.api_ready)
         self.assertTrue(report.marker_found)
@@ -95,12 +109,12 @@ class DrillTests(unittest.TestCase):
         self.assertEqual((report.stage, report.error_code), ("check_api", "API_TIMEOUT"))
 
     def test_missing_marker_fails_after_healthy_api(self) -> None:
-        report = self.run_verify(FakeRunner([CommandResult(0, ""), CommandResult(0, "ok"), CommandResult(1, "not found")]), keep_artifacts=False)
+        report = self.run_verify(FakeRunner([CommandResult(0, ""), CommandResult(0, "ok"), CommandResult(0, "node/test"), CommandResult(1, "not found")]), keep_artifacts=False)
         self.assertEqual((report.stage, report.error_code), ("check_marker", "MARKER_MISSING"))
 
     def test_blocked_preflight_never_runs_restore(self) -> None:
         blocked = PreflightResult((), None, None, None)
-        report = verify(preflight=blocked, snapshot=self.snapshot, token_file=self.token, work_dir=self.work, marker_name="marker", marker_namespace="default", restore_timeout=10, startup_timeout=10, keep_artifacts=False)
+        report = verify(preflight=blocked, snapshot=self.snapshot, token_file=self.token, work_dir=self.work, marker_name="marker", marker_namespace="default", topology="single", pvc_checksum_file=self.pvc_manifest, pvc_volume_archive=self.pvc_archive, restore_timeout=10, startup_timeout=10, keep_artifacts=False)
         self.assertEqual((report.stage, report.error_code), ("preflight", "PREFLIGHT_BLOCKED"))
 
 

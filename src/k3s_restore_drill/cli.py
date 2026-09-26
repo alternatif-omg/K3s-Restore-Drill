@@ -15,6 +15,7 @@ def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--token-file", required=True, type=Path, help="original K3s server token file")
     parser.add_argument("--work-dir", required=True, type=Path, help="dedicated parent directory for test-VM state")
     parser.add_argument("--k3s-binary", default="k3s", help="path or command name of K3s binary")
+    parser.add_argument("--topology", required=True, choices=("single", "ha"), help="source embedded-etcd topology")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,6 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     _common(verify_parser)
     verify_parser.add_argument("--expected-marker", required=True, help="ConfigMap name created before the snapshot")
     verify_parser.add_argument("--marker-namespace", default="default", help="ConfigMap namespace (default: default)")
+    verify_parser.add_argument("--expected-pvc-checksum-file", required=True, type=Path, help="JSON manifest describing the archived local-path PVC file and checksum")
+    verify_parser.add_argument("--pvc-volume-archive", required=True, type=Path, help="tar archive of the local-path volume captured with the snapshot")
     verify_parser.add_argument("--report", required=True, type=Path, help="destination for sanitized JSON report")
     verify_parser.add_argument("--disposable-vm", action="store_true", help="required acknowledgement that this is a dedicated test VM")
     verify_parser.add_argument("--restore-timeout", type=float, default=900, help="restore timeout in seconds (default: 900)")
@@ -56,6 +59,9 @@ def main(argv: list[str] | None = None) -> int:
         work_dir=args.work_dir,
         marker_name=args.expected_marker,
         marker_namespace=args.marker_namespace,
+        topology=args.topology,
+        pvc_checksum_file=args.expected_pvc_checksum_file,
+        pvc_volume_archive=args.pvc_volume_archive,
         restore_timeout=args.restore_timeout,
         startup_timeout=args.startup_timeout,
         keep_artifacts=args.keep_artifacts,

@@ -1,23 +1,34 @@
 # Supported scope
 
-The MVP verifies only a local K3s **single-server embedded-etcd** snapshot plus its original server token on a dedicated Linux x86_64 VM.
+The MVP verifies a local K3s embedded-etcd snapshot from either a **single-server** source or a **three-server HA** source on a separate, disposable Linux x86_64 VM.
 
-## Required environment
+## Required inputs
 
-- A disposable VM, isolated from the source-cluster network and production services.
-- Neither `k3s` nor `k3s-agent` service may be active or enabled on that VM; enabling either could create default state on reboot.
-- A compatible K3s binary. Record its exact `k3s --version` in each report.
-- A dedicated `--work-dir`; never `/` or `/var/lib/rancher/k3s`.
-- A regular, readable, nonempty snapshot and token file. Token permissions must be `0600`.
-- Enough free disk: three times the snapshot size plus 2 GiB.
-- A non-secret ConfigMap marker created before the snapshot, with explicit name and namespace.
+- Original server token and a K3s binary compatible with the snapshot.
+- A non-secret ConfigMap marker created before the snapshot.
+- A `local-path` PVC archive captured with the snapshot.
+- A checksum manifest with this shape:
+
+  ```json
+  {
+    "local_path": "/var/lib/rancher/k3s/storage/pvc-..._drill_drill-data",
+    "relative_path": "payload.txt",
+    "sha256": "lowercase-sha256",
+    "namespace": "drill",
+    "claim": "drill-data",
+    "pv": "pvc-...",
+    "source_node": "source-server-hostname"
+  }
+  ```
+
+`local_path` is created only on the disposable target and removed by default after the drill. The archive must contain only relative regular files and directories.
 
 ## Result semantics
 
-`PASS` means the restored test VM reached the Kubernetes API and can read the named marker. It does **not** prove that workloads, images, networking, persistent volumes, external databases, or a production cluster are recoverable.
+`PASS` means the recovered API and node are ready, the pre-snapshot marker is readable, and the restored local-path payload produced the expected SHA-256 checksum. The report records `topology` and `pvc_checksum_match`.
 
-`FAIL` identifies the stage that failed; it does not prove the snapshot is corrupt. Compatibility flags and test-VM conditions may be missing.
+For HA snapshots, K3s `--cluster-reset` restores one etcd member on the target. It does not recreate the original three-server topology. `source_node` is required for HA so the recovered member keeps the PVC's immutable node affinity while its status is rebound to the target IP.
 
 ## Explicit exclusions
 
-SQLite and external datastore backups, S3 snapshots, HA/multi-server recovery, production use, VM provisioning, scheduled drills, dashboards, users, applications, databases, and PVC recovery are outside this MVP.
+SQLite and external datastore backups, S3 snapshots, production restores, VM provisioning, scheduled drills, application-health checks, databases, and non-local-path storage remain outside the MVP.

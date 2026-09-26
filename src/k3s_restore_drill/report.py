@@ -48,9 +48,11 @@ class DrillReport:
     started_at: str
     duration_seconds: float = 0.0
     k3s_version: str | None = None
+    topology: str | None = None
     snapshot_size_bytes: int | None = None
     api_ready: bool = False
     marker_found: bool = False
+    pvc_checksum_match: bool | None = None
     error_code: str | None = None
     hint: str | None = None
     stages: dict[str, str] = field(default_factory=dict)
