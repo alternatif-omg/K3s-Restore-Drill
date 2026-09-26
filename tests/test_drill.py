@@ -6,9 +6,6 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
-from unittest import mock
-
-import k3s_restore_drill.drill as drill
 from k3s_restore_drill.drill import verify
 from k3s_restore_drill.preflight import PreflightResult, Readiness
 from k3s_restore_drill.runner import CommandResult
@@ -79,12 +76,12 @@ class DrillTests(unittest.TestCase):
             "runner": runner,
             "sleep": lambda _: None,
             "topology": "single",
+            "_volume_destination": self.work / "pvc-test-volume",
             "pvc_checksum_file": self.pvc_manifest,
             "pvc_volume_archive": self.pvc_archive,
         }
         options.update(kwargs)
-        with mock.patch.object(drill.os, "name", "nt"):
-            return verify(preflight=self.preflight, snapshot=self.snapshot, token_file=self.token, work_dir=self.work, marker_name="marker", marker_namespace="default", **options)
+        return verify(preflight=self.preflight, snapshot=self.snapshot, token_file=self.token, work_dir=self.work, marker_name="marker", marker_namespace="default", **options)
 
     def test_pass_requires_restore_api_and_marker(self) -> None:
         report = self.run_verify(FakeRunner([CommandResult(0, ""), CommandResult(0, "ok"), CommandResult(0, "node/test"), CommandResult(0, "configmap/marker")]), keep_artifacts=False)

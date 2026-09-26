@@ -84,10 +84,10 @@ def _extract_pvc_archive(archive: Path, destination: Path) -> None:
         raise DrillFailure("prepare", "PVC_ARCHIVE_INVALID", "provide a readable tar archive containing the local-path volume", str(exc)) from exc
 
 
-def _prepare_pvc_volume(check: PvcCheck, archive: Path, run_dir: Path) -> Path:
+def _prepare_pvc_volume(check: PvcCheck, archive: Path, run_dir: Path, destination: Path | None = None) -> Path:
     if not archive.is_file() or archive.stat().st_size == 0:
         raise DrillFailure("prepare", "PVC_ARCHIVE_INVALID", "PVC volume archive must be a readable nonempty regular file")
-    destination = check.local_path if os.name == "posix" else run_dir / "pvc-test-volume"
+    destination = destination or (check.local_path if os.name == "posix" else run_dir / "pvc-test-volume")
     if destination.exists():
         raise DrillFailure("prepare", "PVC_PATH_EXISTS", "the disposable VM already has the local-path volume directory; use a clean target VM", str(destination))
     stage = run_dir / "pvc-stage"
@@ -149,6 +149,7 @@ def verify(
     keep_artifacts: bool,
     runner: CommandRunner | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    _volume_destination: Path | None = None,
 ) -> DrillReport:
     started = datetime.now(UTC)
     report = DrillReport(status="FAIL", stage="preflight", started_at=started.isoformat().replace("+00:00", "Z"), topology=topology)
@@ -163,6 +164,7 @@ def verify(
     process = None
     run_dir: Path | None = None
     check: PvcCheck | None = None
+    volume_path: Path | None = None
     pvc_prepared = False
     try:
         check = _load_pvc_check(pvc_checksum_file)
@@ -173,7 +175,7 @@ def verify(
         work_dir.chmod(0o700)
         run_dir = Path(tempfile.mkdtemp(prefix="drill-", dir=work_dir))
         run_dir.chmod(0o700)
-        volume_path = _prepare_pvc_volume(check, pvc_volume_archive, run_dir)
+        volume_path = _prepare_pvc_volume(check, pvc_volume_archive, run_dir, _volume_destination)
         pvc_prepared = True
         local_snapshot, local_token = run_dir / "snapshot", run_dir / "server-token"
         _copy_private(snapshot, local_snapshot)
@@ -231,8 +233,8 @@ def verify(
     finally:
         if process is not None:
             stop_process(process)
-        if pvc_prepared and check is not None and check.local_path.exists():
-            shutil.rmtree(check.local_path)
+        if pvc_prepared and volume_path is not None and volume_path.exists():
+            shutil.rmtree(volume_path)
         if run_dir and run_dir.exists() and not keep_artifacts:
             shutil.rmtree(run_dir)
     return report
