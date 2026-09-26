@@ -1,10 +1,10 @@
 # k3s-restore-drill
 
-**Test whether a K3s embedded-etcd snapshot and its original server token can be restored on a disposable VM.**
+**Test whether a K3s embedded-etcd snapshot, its original server token, and its local-path PVC payload can be recovered on a disposable VM.**
 
 `k3s-restore-drill` is a safety-focused CLI for a question that snapshot creation alone cannot answer:
 
-> Can this snapshot and its original server token boot a recovered K3s control plane on another host, and can that recovered API read state that existed before the snapshot?
+> Can this snapshot and its original server token boot a recovered K3s control plane on another host, can that API read pre-snapshot state, and is the required local-path PVC payload intact?
 
 It is intentionally a CLI, not a dashboard. Restore input contains cluster state and secrets; a web UI would add authentication, upload, storage, and attack-surface problems before the core recovery workflow is proven.
 
@@ -29,9 +29,15 @@ For the supported environment, `PASS` means:
 1. K3s restored a supplied single-server or three-server-HA embedded-etcd snapshot on the disposable target.
 2. The restored K3s API became ready.
 3. The target read a ConfigMap marker created **before** the snapshot.
-4. A temporary verification pod mounted the restored local-path PVC and matched its recorded SHA-256 checksum.
+4. The recovered node became Ready and the restored local-path PVC payload matched its recorded SHA-256 checksum.
 
 The report records topology, K3s version, snapshot size, duration, and completed stages. A local-path PVC is separate host-disk data, so its archive is required in addition to the etcd snapshot and token.
+
+## Validation status
+
+- Lab-validated for three-server HA embedded-etcd plus a local-path PVC on Ubuntu 24.04 with K3s `v1.36.4+k3s1`: two successful live CLI drills.
+- External operator validation is requested and remains incomplete; this is not production-ready.
+- A repeated live single-server validation remains pending.
 
 ## Recovery-drill flow
 
@@ -41,7 +47,7 @@ flowchart TB
         direction TB
         S1["Create non-secret marker and PVC payload"]
         S2["Create embedded-etcd snapshot and PVC archive"]
-        S3["Copy original server token and checksum manifest"]
+        S3["Capture original server token and checksum manifest"]
         S1 --> S2
         S1 --> S3
     end
@@ -57,13 +63,13 @@ flowchart TB
         direction TB
         T1["Clean Linux target<br/>K3s services inactive and disabled"]
         T2{"inspect"}
-        T3["Create private work directory<br/>and private data-dir token"]
+        T3["Validate inputs; extract PVC archive<br/>create private work and data directories"]
         T4["K3s cluster-reset<br/>from local snapshot"]
         T5{"Restore completed?"}
-        T6["Start recovered K3s server"]
-        T7{"Kubernetes API ready?"}
+        T6["Start recovered K3s server<br/>and rebind HA node status to target IP"]
+        T7{"Kubernetes API and node ready?"}
         T8{"Marker and PVC checksum match?"}
-        T9["PASS report<br/>API, marker, and PVC verified"]
+        T9["PASS report<br/>API, node, marker, and PVC verified"]
         F1["FAIL report<br/>stage, hint, sanitized error"]
         C1["Stop test process<br/>remove private run directory"]
 
@@ -125,7 +131,7 @@ flowchart TB
 - Application-health, image-registry, network, and database recovery.
 - Replacing the official K3s restore implementation.
 
-K3s performs the actual etcd restore and checksum work. This project orchestrates a guarded drill around it.
+K3s performs the etcd restore. This project orchestrates the guarded drill and computes the local-path payload checksum.
 
 ## Security boundary
 
@@ -220,21 +226,21 @@ Exit codes:
 | Code | Meaning |
 | --- | --- |
 | `0` | Drill passed. |
-| `1` | Restore, startup, API, or marker verification failed. |
+| `1` | Restore, node startup, API, marker, or PVC checksum verification failed. |
 | `2` | Preflight blocked the drill or `inspect` found an unresolved prerequisite. |
 
 ## Lab evidence
 
-The CLI was exercised end-to-end on separate Ubuntu 24.04 source and target VMs:
+The CLI was exercised twice end-to-end on separate Ubuntu 24.04 source and target VMs:
 
 - source: three-server HA embedded-etcd; target: one disposable restore VM;
 - source and target K3s: `v1.36.4+k3s1`;
 - embedded-etcd snapshot: 5,271,584 bytes;
 - marker: `drill/k3s-drill-marker`;
-- result: `PASS`, API and recovered node ready, marker found, and local-path PVC SHA-256 matched;
-- measured CLI drill duration: 52.926 seconds.
+- both runs: API and recovered node ready, marker found, and local-path PVC SHA-256 matched;
+- measured CLI drill durations: 52.926 seconds and 49.198 seconds.
 
-This is one lab result, not a compatibility promise for every K3s configuration.
+These are lab results, not a compatibility promise for every K3s configuration.
 
 ## Why continue this project?
 
